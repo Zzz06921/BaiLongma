@@ -71,12 +71,14 @@ if (archs.includes('universal')) {
   run('node', ['scripts/build-macos-speech.mjs', 'universal', '--required'])
 
   console.log('[build:mac] packaging universal DMG')
-  run('node', [
-    './node_modules/electron-builder/cli.js',
-    '--mac',
-    '--universal',
-    '--config.npmRebuild=true',
-  ])
+ run('node', [
+  './node_modules/electron-builder/cli.js',
+  '--mac',
+  '--universal',
+  '--publish',
+  'never',
+  '--config.npmRebuild=true',
+]);
   process.exit(0)
 }
 
