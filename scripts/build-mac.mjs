@@ -42,6 +42,17 @@ function run(command, args) {
   }
 }
 
+function betterSqliteBinaryPath() {
+  return path.join(
+    projectRoot,
+    'node_modules',
+    'better-sqlite3',
+    'build',
+    'Release',
+    'better_sqlite3.node',
+  )
+}
+
 function stageUniversalPlaywrightBrowsers() {
   const stagingRoot = path.join(projectRoot, 'build', 'playwright-browsers')
   const universalDir = path.join(stagingRoot, 'mac-universal')
@@ -58,34 +69,7 @@ function stageUniversalPlaywrightBrowsers() {
   }
 }
 
-run('node', ['scripts/prebuild-clean.mjs'])
-run('node', [
-  'scripts/prepare-playwright-browsers.mjs',
-  '--platform=darwin',
-  ...stagingArchs.map((arch) => `--arch=${arch}`),
-])
-
-if (archs.includes('universal')) {
-  stageUniversalPlaywrightBrowsers()
-  console.log('[build:mac] building native macOS speech helper for universal')
-  run('node', ['scripts/build-macos-speech.mjs', 'universal', '--required'])
-
-  console.log('[build:mac] packaging universal DMG')
- run('node', [
-  './node_modules/electron-builder/cli.js',
-  '--mac',
-  '--universal',
-  '--publish',
-  'never',
-  '--config.npmRebuild=true',
-]);
-  process.exit(0)
-}
-
-for (const arch of archs) {
-  console.log(`[build:mac] building native macOS speech helper for ${arch}`)
-  run('node', ['scripts/build-macos-speech.mjs', arch, '--required'])
-
+function rebuildBetterSqlite(arch) {
   console.log(`[build:mac] rebuilding better-sqlite3 for ${arch}`)
   run('node', [
     './node_modules/@electron/rebuild/lib/cli.js',
@@ -97,6 +81,67 @@ for (const arch of archs) {
     '-a',
     arch,
   ])
+
+  const binary = betterSqliteBinaryPath()
+  if (!existsSync(binary)) {
+    console.error(`[build:mac] better-sqlite3 binary not found after ${arch} rebuild: ${binary}`)
+    process.exit(1)
+  }
+
+  const outputDir = path.join(projectRoot, 'build', 'native-modules')
+  mkdirSync(outputDir, { recursive: true })
+  const output = path.join(outputDir, `better_sqlite3-${arch}.node`)
+  cpSync(binary, output)
+  return output
+}
+
+function buildUniversalBetterSqlite() {
+  const arm64Binary = rebuildBetterSqlite('arm64')
+  const x64Binary = rebuildBetterSqlite('x64')
+  const output = betterSqliteBinaryPath()
+
+  console.log('[build:mac] merging better-sqlite3 native module for universal')
+  run('lipo', [
+    '-create',
+    arm64Binary,
+    x64Binary,
+    '-output',
+    output,
+  ])
+}
+
+run('node', ['scripts/prebuild-clean.mjs'])
+run('node', [
+  'scripts/prepare-playwright-browsers.mjs',
+  '--platform=darwin',
+  ...stagingArchs.map((arch) => `--arch=${arch}`),
+])
+
+if (archs.includes('universal')) {
+  stageUniversalPlaywrightBrowsers()
+
+  console.log('[build:mac] building native macOS speech helper for universal')
+  run('node', ['scripts/build-macos-speech.mjs', 'universal', '--required'])
+
+  buildUniversalBetterSqlite()
+
+  console.log('[build:mac] packaging universal DMG')
+  run('node', [
+    './node_modules/electron-builder/cli.js',
+    '--mac',
+    '--universal',
+    '--publish',
+    'never',
+    '--config.npmRebuild=false',
+  ])
+  process.exit(0)
+}
+
+for (const arch of archs) {
+  console.log(`[build:mac] building native macOS speech helper for ${arch}`)
+  run('node', ['scripts/build-macos-speech.mjs', arch, '--required'])
+
+  rebuildBetterSqlite(arch)
 
   console.log(`[build:mac] packaging ${arch} DMG`)
   run('node', ['./node_modules/electron-builder/cli.js', '--mac', 'dmg', `--${arch}`])
